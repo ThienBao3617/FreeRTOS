@@ -1,1 +1,1 @@
-# FreeRTOS
+FreeRTOS for ARM Cortex-M4 using STM32F407VGT6U running mulitple tasks and blinks LED on each task. Based on Cortex-M4 Deivces Generic User Guide document.
