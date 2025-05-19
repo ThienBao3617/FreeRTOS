@@ -26,13 +26,19 @@ void task3_handler(void);
 void task4_handler(void);
 void init_systick_timer(uint32_t tick_hz);
 __attribute__((naked)) init_scheduler_task(uint32_t sched_top_of_stack);
+void update_next_task(void);
+void save_psp_value(uint32_t current_psp_value);
+uint32_t get_psp_value(void);
 
-init_task_stack(void);
-enable_processor_faults(void);
+void init_tasks_stack(void);
+void enable_processor_faults(void);
+__attribute__((naked)) void switch_msp_to_psp(void);
 
 #define MAX_STACKS 4
 uint32_t psp_of_stacks[MAX_STACKS] = {T1_STACK_START, T2_STACK_START, T3_STACK_START, T4_STACK_START};
 uint32_t task_handlers[MAX_STACKS];
+
+uint8_t current_task = 0;
 
 int main (void){
     enable_processor_faults();
@@ -43,7 +49,7 @@ int main (void){
     task_handlers[2] = (uint32_t)task3_handler;
     task_handlers[3] = (uint32_t)task4_handler;
 
-    init_task_stack();
+    init_tasks_stack();
 
     // convert from MSP to PSP
     switch_msp_to_psp();
@@ -106,7 +112,7 @@ __attribute__((naked)) init_scheduler_task(uint32_t sched_top_of_stack){
 }
 
 #define DUMMY_XPSR 0x01000000
-init_task_stack(void){
+void init_task_stack(void){
     uint32_t *pPSP;
     for(int i = 0; i < MAX_STACKS; i++){
         pPSP = (uint32_t*)psp_of_stacks[i];
@@ -130,7 +136,7 @@ init_task_stack(void){
     }
 }
 
-enable_processor_faults(void){
+void enable_processor_faults(void){
     // 1 enable all config exception like usage fault, mem manage fault and bus fault
     uint32_t *pSHCSR = (uint32_t*)0xE000ED24;
 
@@ -154,4 +160,52 @@ void BusFault_Handler(void){
     while(1);
 }
 
-void SysTick_Handler(){}
+uint32_t get_psp_value(void){
+    return psp_of_stacks[current_task];
+}
+ 
+void save_psp_value(uint32_t current_psp_value){
+    psp_of_stacks[current_task] = current_psp_value;
+}
+
+void update_next_task(void){
+    current_task++;
+    current_task = current_task % MAX_STACKS;
+}
+
+__attribute__((naked)) void switch_msp_to_psp(void){
+    //1. initialize the PSP with TASK1 stack start address
+    // get value of the PSP at current task
+    __asm volatile("PUSH {PR}"); // save LR connect again to main()
+    __asm volatile("BL get_psp_value"); // return value save in R0
+    __asm volatile("MSR PSP, R0"); // initialize PSP
+    __asm volatile("POP {LR}"); // value return in LR
+
+    //2. change MSP to PSP using CONTROL register
+    __asm volatile("MOV R0, #0x02");
+    __asm volatile("MSR CONTROL, R0");
+    __asm volatile("BX LR");
+}
+
+__attribute__((naked)) void SysTick_Handler(){
+    // save status for task current
+    //1. get value PSP of running current task
+    __asm volatile("MSR Rp, PSP");
+    //2. use PSP value that store SF2 (R4 - R11)
+    __asm volatile("STMDB R0!, {R4-R11}");
+    __asm volatile("PUSH {LR}");
+    //3. save current value of PSP
+    __asm volatile("BL save_psp_value");
+
+    // context access of the next task
+    //1. decide which task will run
+    __asm volatile("BL update_next_task");
+    //2. get PSP value
+    __asm volatile("BL get_psp_value");
+    //3. use PSP value to access SF2 (R4 - R11)
+    __asm volatile("LDMIA R0!, {R4, R11}");
+    //4. update PSP and exit
+    __asm volatile("MSR PSP, R0"); 
+    __asm volatile("POP {LR}");
+    __asm volatile("BX LR");
+}
