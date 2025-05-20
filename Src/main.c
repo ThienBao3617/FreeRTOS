@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include "led.h"
 
 // stack memory
 #define SIZE_TASK_STACK (5*1024)
@@ -49,12 +50,20 @@ int main (void){
     task_handlers[2] = (uint32_t)task3_handler;
     task_handlers[3] = (uint32_t)task4_handler;
 
+    led_init_all();
+
     init_tasks_stack();
 
-    // convert from MSP to PSP
-    switch_msp_to_psp();
-
     init_systick_timer(TICK_HZ);
+
+    // convert from MSP to PSP
+    switch_msp_to_psp();led_on(12);
+        delay(DELAY_COUNT_1S);
+        led_off(12);
+        delay(DELAY_COUNT_1S);
+
+    task1_handler();
+
     //loop forever
     for(;;);
 }
@@ -62,24 +71,40 @@ int main (void){
 void task1_handler(void){
     while(1){
         printf("Task 1\n");
+        led_on(12);
+        delay(DELAY_COUNT_1S);
+        led_off(12);
+        delay(DELAY_COUNT_1S);
     }
 }
 
 void task2_handler(void){
     while(1){
         printf("Task 2\n");
+        led_on(13);
+        delay(DELAY_COUNT_500MS);
+        led_off(13);
+        delay(DELAY_COUNT_500MS);
     }
 }
 
 void task3_handler(void){
     while(1){
         printf("Task 3\n");
+        led_on(14);
+        delay(DELAY_COUNT_250MS);
+        led_off(14);
+        delay(DELAY_COUNT_250MS);
     }
 }
 
 void task4_handler(void){
     while(1){
         printf("Task 4\n");
+        led_on(15);
+        delay(DELAY_COUNT_125MS);
+        led_off(15);
+        delay(DELAY_COUNT_125MS);
     }
 }
 
