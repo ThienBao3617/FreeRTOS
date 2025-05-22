@@ -1,0 +1,6 @@
+/home/skytold/dev/FreeRTOS/mini_scheduler/CMakeFiles/mini_scheduler.dir
+/home/skytold/dev/FreeRTOS/mini_scheduler/CMakeFiles/edit_cache.dir
+/home/skytold/dev/FreeRTOS/mini_scheduler/CMakeFiles/rebuild_cache.dir
+/home/skytold/dev/FreeRTOS/mini_scheduler/cmake/stm32cubemx/CMakeFiles/STM32_Drivers.dir
+/home/skytold/dev/FreeRTOS/mini_scheduler/cmake/stm32cubemx/CMakeFiles/edit_cache.dir
+/home/skytold/dev/FreeRTOS/mini_scheduler/cmake/stm32cubemx/CMakeFiles/rebuild_cache.dir
