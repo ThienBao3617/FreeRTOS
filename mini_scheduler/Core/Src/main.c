@@ -21,7 +21,7 @@
 #define HSI_CLOCK 16000000U
 #define SYS_TIMER_CLOCK HSI_CLOCK
 
-//task handle function
+// task handle function
 void task1_handler(void);
 void task2_handler(void);
 void task3_handler(void);
@@ -39,13 +39,16 @@ uint32_t get_psp_value(void);
 
 void task_delay(uint32_t tick_count);
 
-#define MAX_STACKS 4
+#define INTERRUPT_DISABLE() do{__asm volatile ("MOV R0,#0x1"); asm volatile("MSR PRIMASK,R0");} while(0)
+#define INTERRUPT_ENABLE() do{__asm volatile ("MOV R0,#0x0"); asm volatile("MSR PRIMASK,R0");} while(0)
+
+// #define MAX_STACKS 4
 #define MAX_TASKS  5
 uint32_t g_tick_count = 0;
 // uint32_t psp_of_stacks[MAX_STACKS] = {T1_STACK_START, T2_STACK_START, T3_STACK_START, T4_STACK_START};
 // uint32_t task_handlers[MAX_STACKS];
 
-uint8_t current_task = 1;
+uint8_t current_task = 1; // task 1 is running
 
 typedef struct{
     uint32_t psp_value;
@@ -58,6 +61,7 @@ TCB_t user_tasks[MAX_TASKS];
 
 int main (void){
     enable_processor_faults();
+
     init_scheduler_task(SCHEDULER_STACK_START);
 
     // task_handlers[0] = (uint32_t)task1_handler;
@@ -76,7 +80,7 @@ int main (void){
 
     task1_handler();
 
-    //loop forever
+    // loop forever
     for(;;);
 }
 
@@ -88,9 +92,9 @@ void task1_handler(void){
     while(1){
         printf("Task 1\n");
         led_on(12);
-        delay(DELAY_COUNT_1S);
+        task_delay(1000);
         led_off(12);
-        delay(DELAY_COUNT_1S);
+        task_delay(1000);
     }
 }
 
@@ -98,9 +102,9 @@ void task2_handler(void){
     while(1){
         printf("Task 2\n");
         led_on(13);
-        delay(DELAY_COUNT_500MS);
+        task_delay(500);
         led_off(13);
-        delay(DELAY_COUNT_500MS);
+        task_delay(500);
     }
 }
 
@@ -108,9 +112,9 @@ void task3_handler(void){
     while(1){
         printf("Task 3\n");
         led_on(14);
-        delay(DELAY_COUNT_250MS);
+        task_delay(250);
         led_off(14);
-        delay(DELAY_COUNT_250MS);
+        task_delay(250);
     }
 }
 
@@ -118,9 +122,9 @@ void task4_handler(void){
     while(1){
         printf("Task 4\n");
         led_on(15);
-        delay(DELAY_COUNT_125MS);
+        task_delay(125);
         led_off(15);
-        delay(DELAY_COUNT_125MS);
+        task_delay(125);
     }
 }
 
@@ -128,33 +132,33 @@ void init_systick_timer(uint32_t tick_hz){
     uint32_t *pSRVR = (uint32_t *) 0xE000E014;
     uint32_t *pSCSR = (uint32_t *) 0xE000E010;
 
-    //reload value
+    // reload value
     uint32_t count_value = (SYS_TIMER_CLOCK / TICK_HZ) - 1;
 
-    //delete SVR 24 bits
+    // delete SVR 24 bits
     *pSCSR &= ~(0x00FFFFFF);
 
-    //write value into SVR
+    // write value into SVR
     *pSCSR |= count_value;
 
-    //enable systick exception request
+    // enable systick exception request
     *pSRVR |= (1 << 1);
 
-    //clocksource 
+    // clocksource 
     *pSRVR |= (1 << 2);
 
-    //enable counter
+    // enable counter
     *pSRVR |= (1 << 0);
 }
 
 __attribute__((naked)) init_scheduler_task(uint32_t sched_top_of_stack){
     __asm volatile("MSR MSP, %0": : "r"(sched_top_of_stack):);
-    __asm volatile("BX LR"); //copy value of LR into PC
+    __asm volatile("BX LR"); // copy value of LR into PC
 }
 
 #define DUMMY_XPSR 0x01000000
 #define TASK_RUNNING_STATE 0x00
-#define TASK_BLOCKED_STATE 0x01
+#define TASK_BLOCKED_STATE 0xFF
 void init_tasks_stack(void){
     user_tasks[0].current_state = TASK_RUNNING_STATE;
     user_tasks[1].current_state = TASK_RUNNING_STATE;
@@ -175,7 +179,7 @@ void init_tasks_stack(void){
     user_tasks[4].task_handler = task4_handler;
 
     uint32_t *pPSP;
-    for(int i = 0; i < MAX_STACKS; i++){
+    for(int i = 0; i < MAX_TASKS; i++){
         pPSP = (uint32_t*)user_tasks[i].psp_value;
 
         pPSP--; // XPSR reg
@@ -229,8 +233,18 @@ void save_psp_value(uint32_t current_psp_value){
 }
 
 void update_next_task(void){
-    current_task++;
-    current_task = current_task % MAX_STACKS;
+    int state = TASK_BLOCKED_STATE;
+
+    for(int i = 0; i < MAX_TASKS; i++){
+        current_task++;
+        current_task %= MAX_TASKS;
+        state = user_tasks[current_task].current_state;
+        if((state == TASK_RUNNING_STATE) && (current_task != 0)) break;
+    }
+
+    if(state != TASK_RUNNING_STATE) current_task = 0;
+    // current_task++;
+    // current_task = current_task % MAX_STACKS;
 }
 
 __attribute__((naked)) void switch_msp_to_psp(void){
@@ -247,12 +261,28 @@ __attribute__((naked)) void switch_msp_to_psp(void){
     __asm volatile("BX LR");
 }
 
-void task_delay(uint32_t tick_count){
-    user_tasks[current_task].block_count = g_tick_count + tick_count;
-    user_tasks[current_task].current_state = TASK_BLOCKED_STATE;
+void schedule(){
+    uint32_t *pICSR = (uint32_t*) 0xE000ED04;
+    // pend the pendsv exception
+    *pICSR |= (1 << 28);
 }
-__attribute__((naked)) void SysTick_Handler(){
-    // save status for task current
+
+void task_delay(uint32_t tick_count){
+    // disable interrupt
+    INTERRUPT_DISABLE();
+
+    if(current_task){
+        user_tasks[current_task].block_count = g_tick_count + tick_count;
+        user_tasks[current_task].current_state = TASK_BLOCKED_STATE;
+        schedule();
+    }
+
+    // enable interrupt
+    INTERRUPT_ENABLE();
+}
+
+__attribute__((naked)) void PendSV_Handler(void){
+     // save status for task current
     //1. get value PSP of running current task
     __asm volatile("MSR R0, PSP");
     //2. use PSP value that store SF2 (R4 - R11)
@@ -272,4 +302,29 @@ __attribute__((naked)) void SysTick_Handler(){
     __asm volatile("MSR PSP, R0"); 
     __asm volatile("POP {LR}");
     __asm volatile("BX LR");
+}
+
+void update_global_tick_count(void){
+    g_tick_count++;
+}
+
+void unblock_tasks(void){
+    for(int i = 1; i < MAX_TASKS; i++){
+        if(user_tasks[i].current_state != TASK_RUNNING_STATE){
+            if(user_tasks[i].block_count == g_tick_count){
+                user_tasks[i].current_state = TASK_RUNNING_STATE;
+            }
+        }
+    }
+}
+
+void SysTick_Handler(){
+    uint32_t *pICSR = (uint32_t*) 0xE000ED04;
+
+    update_global_tick_count();
+
+    unblock_tasks();
+
+    // pend the pendsv exception
+    *pICSR |= (1 << 28);
 }
