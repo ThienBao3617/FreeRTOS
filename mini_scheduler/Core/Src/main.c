@@ -14,7 +14,8 @@
 #define T2_STACK_START (SRAM_END - (1 * SIZE_TASK_STACK))
 #define T3_STACK_START (SRAM_END - (2 * SIZE_TASK_STACK))
 #define T4_STACK_START (SRAM_END - (3 * SIZE_TASK_STACK))
-#define SCHEDULER_STACK_START (SRAM_END - (4 * SIZE_TASK_STACK))
+#define IDLE_STACK_START ((SRAM_END) - (4 * SIZE_TASK_STACK))
+#define SCHEDULER_STACK_START (SRAM_END - (5 * SIZE_TASK_STACK))
 
 #define TICK_HZ 1000U
 #define HSI_CLOCK 16000000U
@@ -25,30 +26,44 @@ void task1_handler(void);
 void task2_handler(void);
 void task3_handler(void);
 void task4_handler(void);
+void idle_task(void);
 void init_systick_timer(uint32_t tick_hz);
-int init_scheduler_task(uint32_t sched_top_of_stack);
-void update_next_task(void);
-void save_psp_value(uint32_t current_psp_value);
-uint32_t get_psp_value(void);
+__attribute__((naked)) init_scheduler_task(uint32_t sched_top_of_stack);
 
 void init_tasks_stack(void);
 void enable_processor_faults(void);
 __attribute__((naked)) void switch_msp_to_psp(void);
+void update_next_task(void);
+void save_psp_value(uint32_t current_psp_value);
+uint32_t get_psp_value(void);
+
+void task_delay(uint32_t tick_count);
 
 #define MAX_STACKS 4
-uint32_t psp_of_stacks[MAX_STACKS] = {T1_STACK_START, T2_STACK_START, T3_STACK_START, T4_STACK_START};
-uint32_t task_handlers[MAX_STACKS];
+#define MAX_TASKS  5
+uint32_t g_tick_count = 0;
+// uint32_t psp_of_stacks[MAX_STACKS] = {T1_STACK_START, T2_STACK_START, T3_STACK_START, T4_STACK_START};
+// uint32_t task_handlers[MAX_STACKS];
 
-uint8_t current_task = 0;
+uint8_t current_task = 1;
+
+typedef struct{
+    uint32_t psp_value;
+    uint32_t block_count;
+    uint8_t current_state;
+    void(*task_handler)(void);
+}TCB_t;
+
+TCB_t user_tasks[MAX_TASKS];
 
 int main (void){
     enable_processor_faults();
     init_scheduler_task(SCHEDULER_STACK_START);
 
-    task_handlers[0] = (uint32_t)task1_handler;
-    task_handlers[1] = (uint32_t)task2_handler;
-    task_handlers[2] = (uint32_t)task3_handler;
-    task_handlers[3] = (uint32_t)task4_handler;
+    // task_handlers[0] = (uint32_t)task1_handler;
+    // task_handlers[1] = (uint32_t)task2_handler;
+    // task_handlers[2] = (uint32_t)task3_handler;
+    // task_handlers[3] = (uint32_t)task4_handler;
 
     led_init_all();
 
@@ -63,6 +78,10 @@ int main (void){
 
     //loop forever
     for(;;);
+}
+
+void idle_task(void){
+    while(1); 
 }
 
 void task1_handler(void){
@@ -128,23 +147,42 @@ void init_systick_timer(uint32_t tick_hz){
     *pSRVR |= (1 << 0);
 }
 
-int init_scheduler_task(uint32_t sched_top_of_stack){
+__attribute__((naked)) init_scheduler_task(uint32_t sched_top_of_stack){
     __asm volatile("MSR MSP, %0": : "r"(sched_top_of_stack):);
     __asm volatile("BX LR"); //copy value of LR into PC
 }
 
 #define DUMMY_XPSR 0x01000000
-void init_task_stack(void){
+#define TASK_RUNNING_STATE 0x00
+#define TASK_BLOCKED_STATE 0x01
+void init_tasks_stack(void){
+    user_tasks[0].current_state = TASK_RUNNING_STATE;
+    user_tasks[1].current_state = TASK_RUNNING_STATE;
+    user_tasks[2].current_state = TASK_RUNNING_STATE;
+    user_tasks[3].current_state = TASK_RUNNING_STATE;
+    user_tasks[4].current_state = TASK_RUNNING_STATE;
+
+    user_tasks[0].psp_value = IDLE_STACK_START;
+    user_tasks[1].psp_value = T1_STACK_START;
+    user_tasks[2].psp_value = T2_STACK_START;
+    user_tasks[3].psp_value = T3_STACK_START;
+    user_tasks[4].psp_value = T4_STACK_START;
+
+    user_tasks[0].task_handler = idle_task;
+    user_tasks[1].task_handler = task1_handler;
+    user_tasks[2].task_handler = task2_handler;
+    user_tasks[3].task_handler = task3_handler;
+    user_tasks[4].task_handler = task4_handler;
+
     uint32_t *pPSP;
     for(int i = 0; i < MAX_STACKS; i++){
-        pPSP = (uint32_t*)psp_of_stacks[i];
+        pPSP = (uint32_t*)user_tasks[i].psp_value;
 
         pPSP--; // XPSR reg
         *pPSP = DUMMY_XPSR;
 
         pPSP--; // PC reg
-        *pPSP = task_handlers[i];
-
+        *pPSP = (uint32_t*)user_tasks[i].task_handler;
         pPSP--; // LR reg
         *pPSP = 0xFFFFFFFD;
 
@@ -154,7 +192,7 @@ void init_task_stack(void){
         }
 
         // after done, save sPSP
-        psp_of_stacks[i] = (uint32_t)pPSP;
+        user_tasks[i].psp_value = (uint32_t)pPSP;
     }
 }
 
@@ -183,11 +221,11 @@ void BusFault_Handler(void){
 }
 
 uint32_t get_psp_value(void){
-    return psp_of_stacks[current_task];
+    return user_tasks[current_task].psp_value;
 }
  
 void save_psp_value(uint32_t current_psp_value){
-    psp_of_stacks[current_task] = current_psp_value;
+    user_tasks[current_task].psp_value = current_psp_value;
 }
 
 void update_next_task(void){
@@ -209,10 +247,14 @@ __attribute__((naked)) void switch_msp_to_psp(void){
     __asm volatile("BX LR");
 }
 
+void task_delay(uint32_t tick_count){
+    user_tasks[current_task].block_count = g_tick_count + tick_count;
+    user_tasks[current_task].current_state = TASK_BLOCKED_STATE;
+}
 __attribute__((naked)) void SysTick_Handler(){
     // save status for task current
     //1. get value PSP of running current task
-    __asm volatile("MSR Rp, PSP");
+    __asm volatile("MSR R0, PSP");
     //2. use PSP value that store SF2 (R4 - R11)
     __asm volatile("STMDB R0!, {R4-R11}");
     __asm volatile("PUSH {LR}");
@@ -225,7 +267,7 @@ __attribute__((naked)) void SysTick_Handler(){
     //2. get PSP value
     __asm volatile("BL get_psp_value");
     //3. use PSP value to access SF2 (R4 - R11)
-    __asm volatile("LDMIA R0!, {R4, R11}");
+    __asm volatile("LDMIA R0!, {R4-R11}");
     //4. update PSP and exit
     __asm volatile("MSR PSP, R0"); 
     __asm volatile("POP {LR}");
